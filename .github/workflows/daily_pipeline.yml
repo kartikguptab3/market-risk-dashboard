@@ -1,0 +1,53 @@
+name: Daily Market Risk Pipeline
+
+on:
+  schedule:
+    # Runs at 22:30 UTC on weekdays — after US markets close (4pm ET / ~21:00 UTC,
+    # with a buffer for yfinance data to settle)
+    - cron: "30 22 * * 1-5"
+  workflow_dispatch:  # allows manual trigger from the GitHub Actions tab, useful while testing
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch latest market data
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
+          SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}
+          SUPABASE_DB_NAME: ${{ secrets.SUPABASE_DB_NAME }}
+          SUPABASE_DB_USER: ${{ secrets.SUPABASE_DB_USER }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: python -m src.data_pipeline.fetch_data
+
+      - name: Run risk pipeline (VaR/CVaR, backtest, stress tests)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
+          SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}
+          SUPABASE_DB_NAME: ${{ secrets.SUPABASE_DB_NAME }}
+          SUPABASE_DB_USER: ${{ secrets.SUPABASE_DB_USER }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: python -m src.risk_engine.run_risk_pipeline
+
+# Setup notes:
+# 1. Add each SUPABASE_* value under Repo Settings -> Secrets and variables -> Actions -> New repository secret
+# 2. Get these values from your Supabase project: Project Settings -> Database (connection
+#    details) and Project Settings -> API (URL + anon/service key)
+# 3. Test with workflow_dispatch (manual run button in the Actions tab) before relying on the cron schedule
