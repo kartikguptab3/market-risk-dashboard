@@ -86,9 +86,9 @@ streamlit run dashboard/app.py
    SUPABASE_DB_USER = "postgres"
    SUPABASE_DB_PASSWORD = "..."
    ```
-   (You'll need to adjust `config.py`'s env-loading slightly to also work
-   with `st.secrets` on Streamlit Cloud, since it doesn't read `.env` files —
-   worth handling as a small compatibility shim.)
+   (`dashboard/app.py`'s `get_engine()` already checks `st.secrets` first and
+   falls back to `.env` locally — no extra wiring needed for either
+   environment.)
 
 ## Methodology summary
 
