@@ -1,10 +1,12 @@
 # Market Risk Dashboard
 
-A daily-refreshed market risk engine and dashboard for a 14-stock, 10-sector
-US equity portfolio: VaR/CVaR via two methods (parametric, historical
-simulation), rolling backtesting with the Kupiec POF test, and historical
-scenario stress testing — served through a live Streamlit dashboard,
-orchestrated daily via GitHub Actions.
+A market risk engine and dashboard for a 14-stock, 10-sector US equity
+portfolio: VaR/CVaR via two methods (parametric, historical simulation),
+rolling backtesting with the Kupiec POF test, and historical scenario
+stress testing — served through a Streamlit dashboard. The pipeline is run
+manually today (`python -m src.data_pipeline.fetch_data` then
+`python -m src.risk_engine.run_risk_pipeline`); daily automation via
+GitHub Actions is a planned next step, not yet wired up.
 
 ## Architecture
 
@@ -22,8 +24,8 @@ yfinance ──▶ fetch_data.py ──▶ Supabase (Postgres, star schema) ─�
 - **`risk_engine/`** has zero database awareness — every function is pure
   (DataFrame/Series in, numbers out). This makes it unit-testable without a
   live database.
-- **Orchestration**: GitHub Actions runs the pipeline daily after US market
-  close. No server to manage.
+- **Orchestration**: currently manual (see Setup below). A GitHub Actions
+  cron job is the natural next step to automate this, but isn't set up yet.
 
 ## Star schema
 
@@ -70,16 +72,7 @@ python -m src.risk_engine.run_risk_pipeline  # computes VaR/CVaR/backtest/stress
 streamlit run dashboard/app.py
 ```
 
-### 6. Set up daily automation (GitHub Actions)
-1. Push this repo to GitHub.
-2. Go to **Settings → Secrets and variables → Actions** and add each value
-   from your `.env` file as a repository secret (same names:
-   `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_DB_HOST`, etc.).
-3. The workflow in `.github/workflows/daily_pipeline.yml` will run
-   automatically on weekdays after market close. You can also trigger it
-   manually from the **Actions** tab (`workflow_dispatch`).
-
-### 7. Deploy the dashboard (Streamlit Community Cloud)
+### 6. Deploy the dashboard (Streamlit Community Cloud)
 1. Go to [share.streamlit.io](https://share.streamlit.io), sign in with GitHub.
 2. Deploy this repo, pointing at `dashboard/app.py`.
 3. Under the app's **Settings → Secrets**, paste the same Supabase values
@@ -137,6 +130,5 @@ market-risk-dashboard/
 │   ├── data_pipeline/                yfinance → Supabase ETL
 │   └── risk_engine/                  VaR/CVaR, backtesting, stress testing
 ├── dashboard/app.py                  Streamlit app
-├── .github/workflows/                Daily automation
 └── tests/                            Unit tests for risk_engine
 ```
