@@ -8,9 +8,6 @@ stress testing, served through a Streamlit dashboard.
 **Live demo:** https://market-risk-dashboard-kartikguptab3.streamlit.app/
 (free-tier hosting, so it may take ~30-60s to wake up on a cold visit)
 
-For a full script-by-script explanation of how everything works and why,
-see [`docs/PROJECT_WALKTHROUGH.md`](docs/PROJECT_WALKTHROUGH.md).
-
 ## Architecture
 
 ```
@@ -121,7 +118,6 @@ being upfront about.
 market-risk-dashboard/
 ├── sql/schema.sql                    Star schema DDL
 ├── notebooks/                        Exploration + prototyping + final writeup
-├── docs/PROJECT_WALKTHROUGH.md       Script-by-script explanation of the whole project
 ├── src/
 │   ├── config.py                     Supabase connection config
 │   ├── universe.py                   Tickers, sectors, portfolio metadata
