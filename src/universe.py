@@ -1,6 +1,6 @@
 """
 Static reference data: the equity universe and portfolio metadata.
-This is pure reference data (no logic) — consumed by the seed/insertion step,
+This is pure reference data (no logic) -- consumed by the seed/insertion step,
 portfolio.py, stress_testing.py, and the dashboard.
 """
 

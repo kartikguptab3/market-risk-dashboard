@@ -2,7 +2,7 @@
 Portfolio construction utilities.
 
 Pure functions: DataFrame/Series in, numbers or DataFrame/Series out.
-No database awareness — inputs (returns, weights) are always passed in
+No database awareness -- inputs (returns, weights) are always passed in
 by the caller (typically run_risk_pipeline.py, which is the only module
 allowed to bridge data_pipeline/ and risk_engine/).
 
@@ -25,7 +25,7 @@ def align_weights(weights: pd.Series, returns_df: pd.DataFrame) -> pd.Series:
     the two inputs arrive in different orders.
 
     Raises if any ticker in returns_df is missing a weight, or vice versa,
-    rather than silently filling with NaN/0 — a missing weight is a data
+    rather than silently filling with NaN/0 -- a missing weight is a data
     problem that should surface immediately, not get masked.
     """
     missing_weights = set(returns_df.columns) - set(weights.index)
@@ -73,7 +73,7 @@ def portfolio_volatility(weights: pd.Series, cov_matrix: pd.DataFrame, annualize
 
     weights:    index = ticker, values = portfolio weight
     cov_matrix: asset-level covariance matrix (output of covariance_matrix(),
-                with annualize matching the annualize flag used there —
+                with annualize matching the annualize flag used there --
                 don't mix a daily cov_matrix with annualize=True here, or
                 you'll double-scale)
     """

@@ -4,7 +4,7 @@ VaR/CVaR (parametric + historical, both confidence levels), runs the
 backtest, runs stress tests, and writes everything back to Supabase.
 
 This is the ONLY module allowed to import from both data_pipeline/ and
-risk_engine/ — it's the glue layer. risk_engine/ itself stays free of any
+risk_engine/ -- it's the glue layer. risk_engine/ itself stays free of any
 Supabase-specific code.
 
 Scope note: Monte Carlo VaR and the hypothetical sector-shock scenarios are

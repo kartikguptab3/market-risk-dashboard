@@ -3,7 +3,7 @@
 A market risk engine and dashboard for a 14-stock, 10-sector US equity
 portfolio: VaR/CVaR via two methods (parametric, historical simulation),
 rolling backtesting with the Kupiec POF test, and historical scenario
-stress testing — served through a Streamlit dashboard. The pipeline is run
+stress testing -- served through a Streamlit dashboard. The pipeline is run
 manually today (`python -m src.data_pipeline.fetch_data` then
 `python -m src.risk_engine.run_risk_pipeline`); daily automation via
 GitHub Actions is a planned next step, not yet wired up.
@@ -19,9 +19,9 @@ yfinance ──▶ fetch_data.py ──▶ Supabase (Postgres, star schema) ─�
 
 - **Compute** (`fetch_data.py`, `run_risk_pipeline.py`) and **serving**
   (`dashboard/app.py`) are fully separated. The dashboard never recomputes
-  anything — it only reads pre-computed tables. This keeps it fast and is a
+  anything -- it only reads pre-computed tables. This keeps it fast and is a
   correct production-style architecture, not just a convenience.
-- **`risk_engine/`** has zero database awareness — every function is pure
+- **`risk_engine/`** has zero database awareness -- every function is pure
   (DataFrame/Series in, numbers out). This makes it unit-testable without a
   live database.
 - **Orchestration**: currently manual (see Setup below). A GitHub Actions
@@ -87,7 +87,7 @@ streamlit run dashboard/app.py
    SUPABASE_DB_PASSWORD = "..."
    ```
    (`dashboard/app.py`'s `get_engine()` already checks `st.secrets` first and
-   falls back to `.env` locally — no extra wiring needed for either
+   falls back to `.env` locally -- no extra wiring needed for either
    environment.)
 
 ## Methodology summary
@@ -98,13 +98,13 @@ streamlit run dashboard/app.py
   - *Historical simulation*: uses the empirical return distribution, no
     normality assumption.
   - *Monte Carlo* (10,000 correlated paths via Cholesky decomposition) was
-    scoped out to manage project time — `monte_carlo_var_cvar()` in
+    scoped out to manage project time -- `monte_carlo_var_cvar()` in
     `var_cvar.py` is a stub, deliberately left for a future iteration.
 - **Backtesting**: rolling out-of-sample VaR predictions checked against
   realized returns, validated with the Kupiec (1995) Proportion-of-Failures
   test.
 - **Stress testing**: historical scenario replay (2008 GFC, COVID-19 crash,
-  2022 rate-hike selloff) against current portfolio weights — compared
+  2022 rate-hike selloff) against current portfolio weights -- compared
   against the VaR/CVaR baseline to show the gap between "normal times"
   statistical risk models and genuine crisis outcomes. Hypothetical
   sector-shock scenarios (`HYPOTHETICAL_SCENARIOS` in `risk_config.py`) were
@@ -112,7 +112,7 @@ streamlit run dashboard/app.py
 
 ## Known limitations
 
-See `notebooks/04_stress_test_writeup.ipynb` for a full discussion —
+See `notebooks/04_stress_test_writeup.ipynb` for a full discussion --
 normality assumptions, historical-window dependence, correlation behavior
 in crises, and the arbitrary nature of the 250-day window are all worth
 being upfront about.
