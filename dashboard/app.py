@@ -220,15 +220,26 @@ def base_layout(fig, height=480, y_fmt=None):
     return fig
 
 
+ROLLING_LABEL = f"{ROLLING_WINDOW_DAYS}-day rolling"
+EWMA_LABEL = f"EWMA (λ = {EWMA_LAMBDA})"
+
+
 @st.cache_data(ttl=3600)
-def volatility_series(_port_ret: pd.Series, key: str) -> pd.DataFrame:
-    """Annualized 250-day rolling vs EWMA portfolio volatility. `key` busts the cache."""
+def volatility_table(_returns_df: pd.DataFrame, _port_ret: pd.Series, key: str) -> dict:
+    """
+    Annualized 250-day rolling vs EWMA volatility for the portfolio and every
+    ticker, keyed by name. `key` (latest date) busts the cache on new data.
+    EWMA is a one-day-ahead forecast (no look-ahead) -- see portfolio.ewma_volatility.
+    """
     ann = np.sqrt(TRADING_DAYS_PER_YEAR)
-    out = pd.DataFrame({
-        f"{ROLLING_WINDOW_DAYS}-day rolling": _port_ret.rolling(ROLLING_WINDOW_DAYS).std() * ann,
-        f"EWMA (λ = {EWMA_LAMBDA})": ewma_volatility(_port_ret, EWMA_LAMBDA) * ann,
-    })
-    return out.iloc[ROLLING_WINDOW_DAYS:]
+    series = {"Portfolio": _port_ret, **{t: _returns_df[t] for t in _returns_df.columns}}
+    out = {}
+    for name, r in series.items():
+        out[name] = pd.DataFrame({
+            ROLLING_LABEL: r.rolling(ROLLING_WINDOW_DAYS).std() * ann,
+            EWMA_LABEL: ewma_volatility(r, EWMA_LAMBDA) * ann,
+        }).iloc[ROLLING_WINDOW_DAYS:]
+    return out
 
 # ---------------------------------------------------------------------------
 # Header
@@ -242,8 +253,8 @@ c1, c2 = st.columns(2)
 c1.metric("Portfolio", PORTFOLIO_NAME)
 c2.metric("Latest price data", last_price_date.strftime("%Y-%m-%d") if pd.notna(last_price_date) else "N/A")
 
-tab_overview, tab_var, tab_backtest, tab_stress = st.tabs(
-    ["Overview", "VaR / CVaR", "Backtesting", "Stress Test"]
+tab_overview, tab_var, tab_vol, tab_backtest, tab_stress = st.tabs(
+    ["Overview", "VaR / CVaR", "Volatility (EWMA)", "Backtesting", "Stress Test"]
 )
 
 # ---------------------------------------------------------------------------
@@ -385,27 +396,78 @@ with tab_var:
             hide_index=True, width="stretch",
         )
 
-        st.subheader("Portfolio volatility: EWMA vs. rolling window")
-        st.caption(
-            "Annualized. EWMA jumps within days of a shock and decays back; the 250-day "
-            "window reacts slowly and then stays elevated for a year -- which is why "
-            "EWMA-based VaR passes the Kupiec test while the equal-weighted window does not."
-        )
-        vol = volatility_series(port_ret, str(port_ret.index.max()))
-        fig = go.Figure()
-        for name, color, width in [(vol.columns[0], "#9AA5B4", 1.8),
-                                   (vol.columns[1], PORTFOLIO_COLOR, 1.0)]:
-            fig.add_trace(go.Scatter(x=vol.index, y=vol[name], name=name, mode="lines",
-                                     line=dict(color=color, width=width),
-                                     hovertemplate="%{y:.1%}"))
-        add_scenario_bands(fig)
-        base_layout(fig, height=420, y_fmt=".0%")
-        fig.update_xaxes(rangeselector=dict(bgcolor="#EEF1F5", activecolor="#C8D3E3", buttons=[
-            dict(count=1, label="1Y", step="year", stepmode="backward"),
-            dict(count=5, label="5Y", step="year", stepmode="backward"),
-            dict(step="all", label="All"),
-        ]))
-        st.plotly_chart(fig, width="stretch")
+# ---------------------------------------------------------------------------
+# Volatility (EWMA)
+# ---------------------------------------------------------------------------
+with tab_vol:
+    vols = volatility_table(returns_df, port_ret, str(returns_df.index.max()))
+    eff_memory = 1 / (1 - EWMA_LAMBDA)
+
+    st.subheader("EWMA volatility")
+    st.caption(
+        f"RiskMetrics EWMA: σ²ₜ = λ·σ²ₜ₋₁ + (1−λ)·r²ₜ₋₁ with λ = {EWMA_LAMBDA} -- yesterday's return gets "
+        f"{1 - EWMA_LAMBDA:.0%} weight and older days decay geometrically (effective memory ≈ "
+        f"{eff_memory:.0f} trading days, vs. {ROLLING_WINDOW_DAYS} equally weighted days for the rolling "
+        "window). All figures annualized (× √252). This is the σ behind the Parametric (EWMA) VaR."
+    )
+
+    sel = st.selectbox("Series", list(vols), index=0,
+                       help="The equal-weight portfolio, or any single stock")
+    v = vols[sel]
+    now_ewma, now_roll = v[EWMA_LABEL].iloc[-1], v[ROLLING_LABEL].iloc[-1]
+    ratio = now_ewma / now_roll
+    regime = "Elevated" if ratio > 1.2 else "Calm" if ratio < 0.8 else "Normal"
+    pct_rank = (v[EWMA_LABEL] <= now_ewma).mean()
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("EWMA volatility (today)", f"{now_ewma:.1%}")
+    m2.metric(f"{ROLLING_WINDOW_DAYS}-day volatility", f"{now_roll:.1%}")
+    m3.metric("EWMA ÷ rolling", f"{ratio:.2f}×", regime,
+              delta_color="inverse" if regime == "Elevated" else "off")
+    m4.metric("Historical percentile", f"{pct_rank:.0%}",
+              "of all days since " + f"{v.index.min():%Y}", delta_color="off")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=v.index, y=v[ROLLING_LABEL], name=ROLLING_LABEL, mode="lines",
+                             line=dict(color="#9AA5B4", width=1.8),
+                             hovertemplate="Rolling: %{y:.1%}<extra></extra>"))
+    fig.add_trace(go.Scatter(x=v.index, y=v[EWMA_LABEL], name=EWMA_LABEL, mode="lines",
+                             line=dict(color=PORTFOLIO_COLOR, width=1.0),
+                             hovertemplate="EWMA: %{y:.1%}<extra></extra>"))
+    add_scenario_bands(fig)
+    base_layout(fig, height=440, y_fmt=".0%")
+    fig.update_layout(title=f"{sel}: annualized volatility, EWMA vs. rolling window")
+    fig.update_xaxes(rangeselector=dict(bgcolor="#EEF1F5", activecolor="#C8D3E3", x=1, xanchor="right", y=1.02, buttons=[
+        dict(count=1, label="1Y", step="year", stepmode="backward"),
+        dict(count=5, label="5Y", step="year", stepmode="backward"),
+        dict(step="all", label="All"),
+    ]))
+    st.plotly_chart(fig, width="stretch")
+    st.caption(
+        "Read it: EWMA spikes within days of a shock and decays back; the rolling window climbs "
+        "slowly and then stays high for a year. That lag is why equal-weighted VaR under-predicts "
+        "going into a crisis -- and why the EWMA model passes the Kupiec backtest."
+    )
+
+    st.subheader("Today's volatility by stock")
+    snap = pd.DataFrame({
+        "Ticker": [t for t in vols if t != "Portfolio"],
+        EWMA_LABEL: [vols[t][EWMA_LABEL].iloc[-1] for t in vols if t != "Portfolio"],
+        ROLLING_LABEL: [vols[t][ROLLING_LABEL].iloc[-1] for t in vols if t != "Portfolio"],
+    }).sort_values(EWMA_LABEL, ascending=True)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(y=snap["Ticker"], x=snap[ROLLING_LABEL], name=ROLLING_LABEL, orientation="h",
+                         marker_color="#C8CDD5", hovertemplate="Rolling: %{x:.1%}<extra></extra>"))
+    fig.add_trace(go.Bar(y=snap["Ticker"], x=snap[EWMA_LABEL], name=EWMA_LABEL, orientation="h",
+                         marker_color=PORTFOLIO_COLOR, hovertemplate="EWMA: %{x:.1%}<extra></extra>"))
+    fig.add_vline(x=now_ewma if sel == "Portfolio" else vols["Portfolio"][EWMA_LABEL].iloc[-1],
+                  line=dict(color=VAR_COLOR, dash="dash", width=1.5),
+                  annotation_text="Portfolio EWMA", annotation_position="top")
+    base_layout(fig, height=520, y_fmt=None)
+    fig.update_layout(barmode="group", hovermode="y unified",
+                      title="Annualized volatility, sorted by EWMA (the dashed line shows diversification)")
+    fig.update_xaxes(tickformat=".0%", showspikes=False)
+    st.plotly_chart(fig, width="stretch")
 
 # ---------------------------------------------------------------------------
 # Backtesting
