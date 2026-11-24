@@ -10,11 +10,12 @@ import pandas as pd
 from scipy.stats import chi2
 
 from risk_engine.portfolio import portfolio_returns
-from risk_engine.var_cvar import historical_var_cvar, parametric_var_cvar
+from risk_engine.var_cvar import historical_var_cvar, parametric_var_cvar, monte_carlo_var_cvar
 
 _METHOD_FUNCS = {
     "historical": historical_var_cvar,
     "parametric": parametric_var_cvar,
+    "monte_carlo": monte_carlo_var_cvar,  # re-simulates fresh paths for every day of the backtest
 }
 
 

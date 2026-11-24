@@ -1,7 +1,7 @@
 """
 Streamlit market risk dashboard.
 
-Reads live data from Supabase (populated by notebook 01 + run_risk_pipeline.py /
+Reads live data from Postgres on Neon (populated by notebook 01 + run_risk_pipeline.py /
 the GitHub Actions cron). No computation happens here beyond light aggregation --
 VaR/CVaR, backtest, and stress test numbers are all pre-computed and stored;
 this file just queries and displays them.
@@ -16,13 +16,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from sqlalchemy import create_engine
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 sys.path.append(str(project_root / "src"))
 
-from src.config import SupabaseConfig
+from src.config import DatabaseConfig
 from src.universe import PORTFOLIO_NAME, PORTFOLIO_DESCRIPTION
 from src.risk_engine.backtesting import kupiec_pof_test
 from src.risk_engine.stress_testing import stress_vs_var_gap
@@ -32,14 +31,11 @@ st.set_page_config(page_title="Market Risk Dashboard", layout="wide")
 
 # ---------------------------------------------------------------------------
 # Connection -- st.secrets first (Streamlit Community Cloud), .env fallback
-# (local dev), matching SupabaseConfig.from_env()'s expected variable names.
+# (local dev), matching DatabaseConfig.from_env()'s expected variable name.
 # ---------------------------------------------------------------------------
 @st.cache_resource
 def get_engine():
-    secret_keys = [
-        "SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_DB_HOST", "SUPABASE_DB_PORT",
-        "SUPABASE_DB_NAME", "SUPABASE_DB_USER", "SUPABASE_DB_PASSWORD",
-    ]
+    secret_keys = ["DATABASE_URL"]
 
     # st.secrets raises StreamlitSecretNotFoundError outright if no
     # secrets.toml exists anywhere (not just an empty dict) -- which is the
@@ -58,8 +54,7 @@ def get_engine():
         from dotenv import load_dotenv
         load_dotenv(project_root / ".env")
 
-    cfg = SupabaseConfig.from_env()
-    return create_engine(cfg.sqlalchemy_url())
+    return DatabaseConfig.from_env().create_engine()
 
 
 engine = get_engine()
@@ -173,7 +168,7 @@ with tab_overview:
                 "ticker": "Ticker", "company_name": "Company", "sector": "Sector",
                 "market_cap_tier": "Cap", "weight": "Weight",
             }).style.format({"Weight": "{:.2%}"}),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
         )
 
     with col2:
@@ -181,13 +176,13 @@ with tab_overview:
         sector_weights = composition.groupby("sector")["weight"].sum().reset_index()
         fig = px.pie(sector_weights, names="sector", values="weight", hole=0.4)
         fig.update_traces(textinfo="label+percent")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     st.subheader("Indexed Price Performance (Start = 100, Log Scale)")
     indexed = price_history / price_history.iloc[0] * 100
     fig = px.line(indexed, labels={"value": "Indexed Price", "date": "Date"}, log_y=True)
     fig.update_layout(legend_title_text="Ticker")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 # ---------------------------------------------------------------------------
 # VaR / CVaR
@@ -200,13 +195,20 @@ with tab_var:
         latest = risk_metrics[risk_metrics["date_id"] == latest_date].sort_values(["confidence", "method"])
 
         st.subheader(f"Current VaR / CVaR (as of {latest_date})")
+        st.caption(
+            "**Historical**: empirical distribution of the last 250 days. "
+            "**Parametric**: closed-form normal (Delta-Normal). "
+            "**Monte Carlo**: 10,000 correlated scenarios simulated from the window's "
+            "mean and covariance (Cholesky). Historical sitting above the other two "
+            "signals fat tails the normal assumption misses."
+        )
         st.dataframe(
             latest[["method", "confidence", "var_pct", "cvar_pct", "window_days"]]
             .rename(columns={
                 "method": "Method", "confidence": "Confidence",
                 "var_pct": "VaR", "cvar_pct": "CVaR", "window_days": "Window (days)",
             }).style.format({"Confidence": "{:.0%}", "VaR": "{:.2%}", "CVaR": "{:.2%}"}),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
         )
 
         latest = latest.copy()
@@ -218,7 +220,7 @@ with tab_var:
             title="VaR by Method and Confidence Level",
         )
         fig.update_yaxes(tickformat=".1%")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 # ---------------------------------------------------------------------------
 # Backtesting
@@ -247,7 +249,7 @@ with tab_backtest:
                                   mode="markers", name=f"Breaches (n={len(breaches)})",
                                   marker=dict(color="red", size=6)))
         fig.update_layout(title="Realized Returns vs VaR Threshold", yaxis_tickformat=".1%")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         kupiec = kupiec_pof_test(subset["breach"], confidence=sel_confidence)
         m1, m2, m3 = st.columns(3)
@@ -266,7 +268,9 @@ with tab_stress:
         st.info("No stress test results found yet -- run the stress test and push to fact_stress_test.")
     else:
         st.subheader("Historical Scenario: 2008 GFC")
-        row = stress_tests.iloc[0]
+        # headline is always the GFC row (table below lists every scenario)
+        gfc = stress_tests[stress_tests["scenario_name"].str.startswith("2008")]
+        row = (gfc if not gfc.empty else stress_tests).iloc[0]
 
         # Pair against the closest available full-sample 95% historical VaR, if present
         var_95_hist = risk_metrics[
@@ -290,7 +294,7 @@ with tab_stress:
                 textposition="outside",
             ))
             fig.update_layout(title="Statistical VaR vs. Actual 2008 Crisis Loss", yaxis_tickformat=".0%")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             st.write(
                 f"The 2008 GFC scenario produced a loss **{gap['gap_multiple']:.1f}x** the single-day "
@@ -307,5 +311,5 @@ with tab_stress:
                 "start_date": "Start", "end_date": "End",
                 "portfolio_pnl_pct": "P&L %", "portfolio_pnl_value": "P&L ($)",
             }).style.format({"P&L %": "{:.2%}", "P&L ($)": "${:,.0f}"}),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
         )

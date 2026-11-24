@@ -1,7 +1,7 @@
 -- ============================================================
--- Market Risk Dashboard -- Supabase / Postgres Schema
+-- Market Risk Dashboard -- Postgres Schema (Neon)
 -- Star schema: dimension tables + fact tables
--- Run this once in the Supabase SQL Editor (or via psql) to set up.
+-- Run this once in the Neon SQL Editor (or via psql) to set up.
 -- ============================================================
 
 -- ------------------------------------------------------------

@@ -1,16 +1,17 @@
 """
-Risk pipeline orchestrator: pulls fact_returns from Supabase, computes
-VaR/CVaR (parametric + historical, both confidence levels), runs the
-backtest, runs stress tests, and writes everything back to Supabase.
+Risk pipeline orchestrator: pulls fact_returns from Postgres (Neon), computes
+VaR/CVaR (parametric, historical and Monte Carlo, both confidence levels), runs the
+backtest, runs stress tests, and writes everything back to the database.
 
 This is the ONLY module allowed to import from both data_pipeline/ and
 risk_engine/ -- it's the glue layer. risk_engine/ itself stays free of any
-Supabase-specific code.
+database-specific code.
 
-Scope note: Monte Carlo VaR and the hypothetical sector-shock scenarios are
-out of scope for this pipeline (see var_cvar.py / stress_testing.py) --
-only the parametric + historical methods and the historical scenarios in
-HISTORICAL_SCENARIOS run here.
+Scope note: the hypothetical sector-shock scenarios are out of scope for this
+pipeline (see stress_testing.py) -- only the historical scenarios in
+HISTORICAL_SCENARIOS run here. All three VaR methods (historical,
+parametric, Monte Carlo) run in both the current snapshot and the stored
+95% backtest.
 
 Run standalone (after fetch_data.py has populated prices/returns):
     python -m src.risk_engine.run_risk_pipeline
@@ -24,11 +25,14 @@ import pandas as pd
 from sqlalchemy import text
 
 from universe import PORTFOLIO_NAME
-from risk_config import ROLLING_WINDOW_DAYS, CONFIDENCE_LEVELS, ASSUMED_PORTFOLIO_VALUE, HISTORICAL_SCENARIOS
+from risk_config import (ROLLING_WINDOW_DAYS, CONFIDENCE_LEVELS, ASSUMED_PORTFOLIO_VALUE,
+                         HISTORICAL_SCENARIOS, MONTE_CARLO_SIMULATIONS)
 from data_pipeline.db import get_engine, upsert_dataframe, read_table
 from risk_engine.var_cvar import compute_all_methods
 from risk_engine.backtesting import rolling_backtest, kupiec_pof_test
 from risk_engine.stress_testing import historical_scenario_pnl
+
+BACKTEST_METHODS = ["historical", "parametric", "monte_carlo"]
 
 
 def load_returns_matrix(engine):
@@ -69,7 +73,8 @@ def compute_current_var_cvar(engine, returns_df: pd.DataFrame, weights: pd.Serie
     as_of_date = window_df.index.max().date()
 
     results = pd.concat(
-        [compute_all_methods(window_df, weights, confidence=c) for c in CONFIDENCE_LEVELS],
+        [compute_all_methods(window_df, weights, confidence=c, n_simulations=MONTE_CARLO_SIMULATIONS)
+         for c in CONFIDENCE_LEVELS],
         ignore_index=True,
     )
 
@@ -85,24 +90,25 @@ def compute_current_var_cvar(engine, returns_df: pd.DataFrame, weights: pd.Serie
 
 
 def run_backtest_and_store(engine, returns_df: pd.DataFrame, weights: pd.Series, portfolio_id: int) -> None:
-    method, confidence = "historical", CONFIDENCE_LEVELS[0]  # 95% -- fast relative to Monte Carlo
+    confidence = CONFIDENCE_LEVELS[0]  # 95%
 
-    backtest_df = rolling_backtest(returns_df, weights, method=method, confidence=confidence, window=ROLLING_WINDOW_DAYS)
-    if backtest_df.empty:
-        print(f"Not enough history for a {ROLLING_WINDOW_DAYS}-day backtest window yet -- skipping.")
-        return
+    for method in BACKTEST_METHODS:
+        backtest_df = rolling_backtest(returns_df, weights, method=method, confidence=confidence, window=ROLLING_WINDOW_DAYS)
+        if backtest_df.empty:
+            print(f"Not enough history for a {ROLLING_WINDOW_DAYS}-day backtest window yet -- skipping.")
+            return
 
-    backtest_df["portfolio_id"] = portfolio_id
-    backtest_df["date_id"] = pd.to_datetime(backtest_df["date_id"]).dt.date
+        backtest_df["portfolio_id"] = portfolio_id
+        backtest_df["date_id"] = pd.to_datetime(backtest_df["date_id"]).dt.date
 
-    cols = ["date_id", "portfolio_id", "method", "confidence", "predicted_var_pct", "realized_return_pct", "breach"]
-    upsert_dataframe(
-        backtest_df[cols], "fact_var_backtest",
-        pk_cols=["date_id", "portfolio_id", "method", "confidence"], engine=engine,
-    )
+        cols = ["date_id", "portfolio_id", "method", "confidence", "predicted_var_pct", "realized_return_pct", "breach"]
+        upsert_dataframe(
+            backtest_df[cols], "fact_var_backtest",
+            pk_cols=["date_id", "portfolio_id", "method", "confidence"], engine=engine,
+        )
 
-    kupiec = kupiec_pof_test(backtest_df["breach"], confidence=confidence)
-    print(f"Kupiec POF test ({method}, {confidence:.0%}, n={kupiec['n_observations']}): {kupiec['verdict']}")
+        kupiec = kupiec_pof_test(backtest_df["breach"], confidence=confidence)
+        print(f"Kupiec POF test ({method}, {confidence:.0%}, n={kupiec['n_observations']}): {kupiec['verdict']}")
 
 
 def run_stress_tests_and_store(engine, returns_df: pd.DataFrame, weights: pd.Series, portfolio_id: int) -> None:
@@ -128,13 +134,13 @@ def run_stress_tests_and_store(engine, returns_df: pd.DataFrame, weights: pd.Ser
     stress_df = pd.DataFrame(rows)
 
     # fact_stress_test has only a serial PK (no natural unique key) -- clear
-    # this portfolio's prior rows for these scenario names before inserting
-    # fresh ones, so a daily rerun doesn't pile up duplicates for scenario
-    # windows whose underlying historical prices never change.
+    # ALL of this portfolio's prior historical-scenario rows before inserting,
+    # so a daily rerun doesn't pile up duplicates, and a scenario removed from
+    # HISTORICAL_SCENARIOS also disappears from the table (and the dashboard).
     with engine.begin() as conn:
         conn.execute(
-            text("DELETE FROM fact_stress_test WHERE portfolio_id = :pid AND scenario_name = ANY(:names)"),
-            {"pid": portfolio_id, "names": list(stress_df["scenario_name"])},
+            text("DELETE FROM fact_stress_test WHERE portfolio_id = :pid AND scenario_type = 'historical'"),
+            {"pid": portfolio_id},
         )
     stress_df.to_sql("fact_stress_test", engine, if_exists="append", index=False)
     print(f"Stored {len(stress_df)} stress test result(s).")

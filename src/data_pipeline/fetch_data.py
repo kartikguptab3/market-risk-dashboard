@@ -1,6 +1,6 @@
 """
 ETL: pulls daily prices from yfinance, transforms into the star schema,
-and upserts into Supabase.
+and upserts into Postgres (Neon).
 
 Idempotent -- safe to re-run daily (this is what the GitHub Actions cron
 job calls). Every write goes through db.upsert_dataframe(), keyed on each

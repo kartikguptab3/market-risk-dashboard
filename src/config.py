@@ -1,35 +1,46 @@
 """
-Central configuration for the Supabase/Postgres connection.
-All secrets are read from environment variables (.env locally, GitHub Secrets in CI).
+Central configuration for the Postgres connection (hosted on Neon).
+All secrets are read from environment variables (.env locally, GitHub Secrets
+in CI, st.secrets on Streamlit Cloud).
+
+Neon hands you a single connection string, so that's the only thing we read:
+    DATABASE_URL=postgresql://user:pass@ep-xxxx-pooler.<region>.aws.neon.tech/neondb?sslmode=require
 """
 import os
 from dataclasses import dataclass
 
+import sqlalchemy
+from sqlalchemy.engine import Engine
+
 
 @dataclass
-class SupabaseConfig:
+class DatabaseConfig:
     url: str
-    key: str
-    db_host: str
-    db_port: str
-    db_name: str
-    db_user: str
-    db_password: str
 
     @classmethod
-    def from_env(cls) -> "SupabaseConfig":
-        return cls(
-            url=os.environ.get("SUPABASE_URL", ""),
-            key=os.environ.get("SUPABASE_KEY", ""),
-            db_host=os.environ.get("SUPABASE_DB_HOST", ""),
-            db_port=os.environ.get("SUPABASE_DB_PORT", "5432"),
-            db_name=os.environ.get("SUPABASE_DB_NAME", "postgres"),
-            db_user=os.environ.get("SUPABASE_DB_USER", "postgres"),
-            db_password=os.environ.get("SUPABASE_DB_PASSWORD", ""),
-        )
+    def from_env(cls) -> "DatabaseConfig":
+        return cls(url=os.environ.get("DATABASE_URL", "").strip())
 
     def sqlalchemy_url(self) -> str:
-        return (
-            f"postgresql+psycopg2://{self.db_user}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+        # Neon gives "postgresql://..." (some tools emit "postgres://");
+        # SQLAlchemy needs the driver spelled out to use psycopg2.
+        url = self.url
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg2://" + url[len(prefix):]
+        return url
+
+    def create_engine(self) -> Engine:
+        if not self.url:
+            raise RuntimeError(
+                "DATABASE_URL is not set. Add your Neon connection string to .env "
+                "(local), repository secrets (GitHub Actions) or st.secrets (Streamlit Cloud)."
+            )
+        return sqlalchemy.create_engine(
+            self.sqlalchemy_url(),
+            # Neon scales compute to zero after ~5 min idle, which drops open
+            # connections -- pre_ping swaps a dead pooled connection for a fresh
+            # one instead of erroring on the first query after a pause.
+            pool_pre_ping=True,
+            pool_recycle=300,
         )

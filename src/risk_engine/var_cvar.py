@@ -74,24 +74,67 @@ def monte_carlo_var_cvar(
     confidence: float = 0.95,
     n_simulations: int = 10_000,
     random_seed: int | None = 42,
+    distribution: str = "normal",
+    t_df: int = 5,
 ):
     """
     Monte Carlo simulation method.
 
-    NOT YET IMPLEMENTED -- deliberately left as a stub. Cut from project
-    scope alongside hypothetical stress scenarios to manage time; parametric
-    + historical VaR/CVaR still cover two independent estimation approaches.
-    compute_all_methods() skips this method until/unless it's filled in.
+    1. Estimate the mean vector and covariance matrix from returns_df
+       (same inputs as the parametric method -- via portfolio.py).
+    2. Cholesky-decompose the covariance: Cov = L L^T.
+    3. Draw n_simulations vectors of independent shocks Z and correlate
+       them: simulated asset returns = mu + Z L^T. This preserves the
+       cross-asset correlation structure.
+    4. Collapse each simulated scenario into a portfolio return (w . r) and
+       read VaR / CVaR off the simulated distribution exactly like the
+       historical method does.
+
+    distribution:
+      "normal"    -- multivariate normal shocks. Converges to parametric VaR
+                     as n_simulations grows (a useful sanity check).
+      "student_t" -- multivariate Student-t shocks with `t_df` degrees of
+                     freedom, rescaled to the same covariance. Fatter tails,
+                     so 99% VaR / CVaR come out higher than under normality.
+
+    random_seed fixes the draw so results are reproducible run to run.
+
+    Returns (var, cvar), both as positive numbers.
     """
-    raise NotImplementedError
+    if distribution not in ("normal", "student_t"):
+        raise ValueError("distribution must be 'normal' or 'student_t'")
+
+    aligned_weights = align_weights(weights, returns_df)
+    mu = returns_df.mean().values
+    cov = covariance_matrix(returns_df).values
+
+    # tiny diagonal jitter guards against a near-singular covariance
+    L = np.linalg.cholesky(cov + 1e-12 * np.eye(len(cov)))
+
+    rng = np.random.default_rng(random_seed)
+    z = rng.standard_normal((n_simulations, len(mu)))
+
+    if distribution == "student_t":
+        # multivariate t = normal / sqrt(chi2/df); rescale so variance matches cov
+        chi2_draws = rng.chisquare(t_df, size=(n_simulations, 1))
+        z = z / np.sqrt(chi2_draws / t_df) * np.sqrt((t_df - 2) / t_df)
+
+    simulated_asset_returns = mu + z @ L.T          # (n_simulations, n_assets)
+    simulated_port_returns = simulated_asset_returns @ aligned_weights.values
+
+    var = -np.percentile(simulated_port_returns, (1 - confidence) * 100)
+    tail_losses = simulated_port_returns[simulated_port_returns <= -var]
+    cvar = -tail_losses.mean()
+
+    return var, cvar
 
 
 def compute_all_methods(returns_df: pd.DataFrame, weights: pd.Series, confidence: float = 0.95,
                          n_simulations: int = 10_000) -> pd.DataFrame:
     """
-    Calls historical and parametric methods (Monte Carlo pending -- see
-    monte_carlo_var_cvar) and returns a tidy DataFrame with columns
-    [method, confidence, var_pct, cvar_pct] -- one row per method.
+    Calls the historical, parametric and Monte Carlo methods and returns a
+    tidy DataFrame with columns [method, confidence, var_pct, cvar_pct] --
+    one row per method.
     """
     results = []
 
@@ -100,5 +143,8 @@ def compute_all_methods(returns_df: pd.DataFrame, weights: pd.Series, confidence
 
     var_p, cvar_p = parametric_var_cvar(returns_df, weights, confidence)
     results.append({"method": "parametric", "confidence": confidence, "var_pct": var_p, "cvar_pct": cvar_p})
+
+    var_mc, cvar_mc = monte_carlo_var_cvar(returns_df, weights, confidence, n_simulations=n_simulations)
+    results.append({"method": "monte_carlo", "confidence": confidence, "var_pct": var_mc, "cvar_pct": cvar_mc})
 
     return pd.DataFrame(results)

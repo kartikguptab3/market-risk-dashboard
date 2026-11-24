@@ -2,10 +2,9 @@
 Unit tests for the risk_engine pure functions.
 
 Because var_cvar.py has zero database dependency, these run entirely
-against synthetic data -- no Supabase connection needed.
+against synthetic data -- no database connection needed.
 
-Scope note: Monte Carlo VaR is not implemented (see var_cvar.py), so these
-tests cover the parametric and historical methods only.
+Covers all three methods: parametric, historical and Monte Carlo.
 
 Run with:
     pytest tests/
@@ -18,11 +17,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from risk_engine.var_cvar import parametric_var_cvar, historical_var_cvar
+from risk_engine.var_cvar import parametric_var_cvar, historical_var_cvar, monte_carlo_var_cvar
 
 METHODS = {
     "parametric": parametric_var_cvar,
     "historical": historical_var_cvar,
+    "monte_carlo": monte_carlo_var_cvar,
 }
 
 
@@ -78,3 +78,32 @@ def test_parametric_matches_known_normal_case():
     var_95, _ = parametric_var_cvar(returns_df, weights, confidence=0.95)
 
     assert np.isclose(var_95, 1.645 * 0.01, atol=0.001)
+
+
+def test_monte_carlo_converges_to_parametric(synthetic_returns):
+    """
+    With normal shocks, Monte Carlo is simulating the exact distribution the
+    parametric method assumes -- so with enough paths the two should agree.
+    """
+    returns_df, weights = synthetic_returns
+    for confidence in (0.95, 0.99):
+        var_p, cvar_p = parametric_var_cvar(returns_df, weights, confidence)
+        var_mc, cvar_mc = monte_carlo_var_cvar(returns_df, weights, confidence, n_simulations=200_000)
+        assert np.isclose(var_mc, var_p, rtol=0.02)
+        assert np.isclose(cvar_mc, cvar_p, rtol=0.03)
+
+
+def test_monte_carlo_is_reproducible_with_seed(synthetic_returns):
+    """Same seed -> identical result, so stored daily numbers don't jitter."""
+    returns_df, weights = synthetic_returns
+    assert monte_carlo_var_cvar(returns_df, weights, random_seed=1) == \
+           monte_carlo_var_cvar(returns_df, weights, random_seed=1)
+
+
+def test_student_t_has_fatter_tail_than_normal(synthetic_returns):
+    """At 99%, fat-tailed shocks with the same covariance should give a larger CVaR."""
+    returns_df, weights = synthetic_returns
+    _, cvar_normal = monte_carlo_var_cvar(returns_df, weights, 0.99, n_simulations=100_000)
+    _, cvar_t = monte_carlo_var_cvar(returns_df, weights, 0.99, n_simulations=100_000,
+                                     distribution="student_t", t_df=4)
+    assert cvar_t > cvar_normal

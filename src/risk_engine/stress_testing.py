@@ -1,11 +1,11 @@
 """
 Stress testing & scenario analysis.
 
-Scope: historical scenario only (2008 GFC). Hypothetical sector-shock
-scenarios (HYPOTHETICAL_SCENARIOS in risk_config.py) were cut to keep
-project scope manageable -- historical_scenario_pnl below is written
-generically so any entry in HISTORICAL_SCENARIOS can be run, but the
-notebook only calls it for 2008.
+Scope: historical scenarios only (2008 GFC, COVID-19 crash). Hypothetical
+sector-shock scenarios (HYPOTHETICAL_SCENARIOS in risk_config.py) were cut to
+keep project scope manageable -- historical_scenario_pnl below is written
+generically, so the pipeline runs every entry in HISTORICAL_SCENARIOS;
+notebook 04 walks through 2008 in detail.
 
 The important output isn't the stress loss number alone -- it's the GAP
 between stressed loss and the VaR/CVaR estimate. That gap is the entire

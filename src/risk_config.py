@@ -11,10 +11,10 @@ CONFIDENCE_LEVELS = [0.95, 0.99]
 MONTE_CARLO_SIMULATIONS = 10_000
 ASSUMED_PORTFOLIO_VALUE = 10_000_000  # $10M notional, purely for currency-denominated VaR display
 
+# 2022 rate-hike selloff cut for scope; add more (name -> (start, end)) and the pipeline picks them up.
 HISTORICAL_SCENARIOS = {
     "2008 GFC (Lehman collapse)": ("2008-09-01", "2008-11-30"),
     "COVID-19 Crash":             ("2020-02-19", "2020-03-23"),
-    "2022 Rate-Hike Selloff":     ("2022-01-01", "2022-06-30"),
 }
 
 HYPOTHETICAL_SCENARIOS = {

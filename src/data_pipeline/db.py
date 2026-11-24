@@ -1,26 +1,25 @@
 """
-Database connection + upsert helpers for Supabase Postgres.
+Database connection + upsert helpers for Postgres (hosted on Neon).
 
-Raw SQLAlchemy + psycopg2 against the Postgres connection string Supabase
-gives you (Project Settings -> Database -> Connection string) -- no
-supabase-py client needed, this gives full SQL control.
+Raw SQLAlchemy + psycopg2 against the Neon connection string
+(Neon console -> Connect) -- no vendor SDK needed, this gives full SQL control.
 """
 import pandas as pd
 from dotenv import load_dotenv
 from psycopg2.extras import execute_values
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from config import SupabaseConfig
+from config import DatabaseConfig
 
 _engine: Engine | None = None
 
 
 def get_engine() -> Engine:
     """
-    Build (and cache) a SQLAlchemy engine from SupabaseConfig.from_env().
-    Raises a clear error if required connection env vars are missing, rather
-    than failing deep inside a psycopg2 connection attempt.
+    Build (and cache) a SQLAlchemy engine from DatabaseConfig.from_env().
+    Raises a clear error if DATABASE_URL is missing, rather than failing deep
+    inside a psycopg2 connection attempt.
     """
     global _engine
     if _engine is not None:
@@ -31,21 +30,7 @@ def get_engine() -> Engine:
     # values come from repository secrets, not a checked-in .env file.
     load_dotenv()
 
-    cfg = SupabaseConfig.from_env()
-    required = {
-        "SUPABASE_DB_HOST": cfg.db_host,
-        "SUPABASE_DB_USER": cfg.db_user,
-        "SUPABASE_DB_PASSWORD": cfg.db_password,
-        "SUPABASE_DB_NAME": cfg.db_name,
-    }
-    missing = [name for name, value in required.items() if not value]
-    if missing:
-        raise RuntimeError(
-            f"Missing required environment variable(s): {', '.join(missing)}. "
-            "Set them in .env (local) or as repository secrets (GitHub Actions)."
-        )
-
-    _engine = create_engine(cfg.sqlalchemy_url())
+    _engine = DatabaseConfig.from_env().create_engine()
     return _engine
 
 
@@ -59,7 +44,7 @@ def upsert_dataframe(df: pd.DataFrame, table: str, pk_cols: list[str], engine: E
     A plain SQLAlchemy text()-based executemany sends one round-trip PER ROW
     instead -- fine for small tables, but a non-starter for the ~75k-row
     fact_price/fact_returns writes (would be tens of thousands of round-trips
-    to a remote Supabase host).
+    to a remote database host).
     """
     if df.empty:
         return

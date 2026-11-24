@@ -1,9 +1,9 @@
 # Market Risk Dashboard
 
 A market risk engine and dashboard for a 14-stock, 10-sector US equity
-portfolio: VaR/CVaR via two methods (parametric, historical simulation),
-rolling backtesting with the Kupiec POF test, and historical scenario
-stress testing, served through a Streamlit dashboard.
+portfolio: VaR/CVaR via three methods (parametric, historical simulation,
+Monte Carlo), rolling backtesting with the Kupiec POF test, and historical
+scenario stress testing, served through a Streamlit dashboard.
 
 **Live demo:** https://market-risk-dashboard-kartikguptab3.streamlit.app/
 (free-tier hosting, so it may take ~30-60s to wake up on a cold visit)
@@ -11,10 +11,10 @@ stress testing, served through a Streamlit dashboard.
 ## Architecture
 
 ```
-yfinance ──▶ fetch_data.py ──▶ Supabase (Postgres, star schema) ──▶ run_risk_pipeline.py ──▶ Supabase (risk metrics)
-                                                                                                       │
-                                                                                                       ▼
-                                                                                          Streamlit dashboard (reads only)
+yfinance ──▶ fetch_data.py ──▶ Neon (Postgres, star schema) ──▶ run_risk_pipeline.py ──▶ Neon (risk metrics)
+                                                                                               │
+                                                                                               ▼
+                                                                                  Streamlit dashboard (reads only)
 ```
 
 - **Compute** (`fetch_data.py`, `run_risk_pipeline.py`) and **serving**
@@ -24,6 +24,9 @@ yfinance ──▶ fetch_data.py ──▶ Supabase (Postgres, star schema) ─�
 - **`risk_engine/`** has zero database awareness: every function is pure
   (DataFrame/Series in, numbers out). That's what makes it unit-testable
   without a live database.
+- **Database**: serverless Postgres on Neon. Compute scales to zero when
+  idle and resumes on the next query, so the free plan never pauses the
+  project.
 
 ## Star schema
 
@@ -34,18 +37,18 @@ fact tables (`fact_price`, `fact_returns`, `fact_risk_metrics`,
 
 ## Setup
 
-### 1. Create a Supabase project
-1. Sign up at [supabase.com](https://supabase.com) (free tier is enough
-   for this data volume).
-2. Create a new project and set a strong database password (you'll need
-   it below).
-3. Under **Project Settings → Database**, note the connection parameters
-   (host, port, database name, user).
+### 1. Create a Neon project
+1. Sign up at [neon.com](https://neon.com) (the free plan is enough for
+   this data volume).
+2. Create a new project. Pick a US region if the dashboard will run on
+   Streamlit Community Cloud (its servers are in the US).
+3. Click **Connect**, keep **Connection pooling** on, and copy the
+   connection string. That single value is your `DATABASE_URL`.
 
 ### 2. Run the schema
-1. Open **SQL Editor** in the Supabase dashboard.
+1. Open **SQL Editor** in the Neon console.
 2. Paste in `sql/schema.sql` and run it.
-3. Confirm the tables show up under **Table Editor**.
+3. Confirm the tables show up under **Tables**.
 
 ### 3. Local environment
 ```bash
@@ -56,7 +59,7 @@ source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# fill in .env with your Supabase values from step 1
+# fill in DATABASE_URL with your Neon connection string from step 1
 ```
 
 ### 4. Run the pipeline
@@ -78,32 +81,43 @@ pytest tests/
 ### 7. Deploy the dashboard (Streamlit Community Cloud)
 1. Go to [share.streamlit.io](https://share.streamlit.io), sign in with GitHub.
 2. Deploy this repo, pointing at `dashboard/app.py`.
-3. Under the app's **Settings → Secrets**, add the same Supabase values
-   in TOML format:
+3. Under the app's **Settings → Secrets**, add the connection string in
+   TOML format:
    ```toml
-   SUPABASE_DB_HOST = "..."
-   SUPABASE_DB_PORT = "5432"
-   SUPABASE_DB_NAME = "postgres"
-   SUPABASE_DB_USER = "..."
-   SUPABASE_DB_PASSWORD = "..."
+   DATABASE_URL = "postgresql://...neon.tech/neondb?sslmode=require"
    ```
    `dashboard/app.py`'s `get_engine()` checks `st.secrets` first and falls
    back to `.env` locally, so no extra wiring is needed either way.
 
+### 8. GitHub Actions (optional)
+Two workflows in `.github/workflows/`, both with a manual **Run workflow**
+button in the **Actions** tab:
+- `daily_pipeline.yml`: runs step 4's two commands on weekdays after US
+  market close. Needs a repository secret `DATABASE_URL`.
+- `keep_awake.yml`: opens the hosted dashboard every 6 hours (and clicks
+  the wake-up button if it has gone to sleep). Needs a repository variable
+  `APP_URL` set to the app's link.
+
 ## Methodology summary
 
 - **VaR/CVaR**: 250-trading-day rolling window, 95% and 99% confidence,
-  two methods:
+  three methods:
   - *Parametric*: assumes normally distributed returns (closed-form).
   - *Historical simulation*: uses the empirical return distribution, no
     normality assumption.
+  - *Monte Carlo*: 10,000 simulated one-day scenarios drawn from the
+    window's mean vector and covariance matrix, correlated via Cholesky
+    decomposition. Multivariate normal by default (converges to the
+    parametric result, a built-in sanity check); an optional Student-t
+    mode (`distribution="student_t"`) fattens the tails.
 - **Backtesting**: rolling out-of-sample VaR predictions checked against
   realized returns, validated with the Kupiec (1995) Proportion-of-Failures
   test.
-- **Stress testing**: historical scenario replay (2008 GFC, COVID-19 crash,
-  2022 rate-hike selloff) against current portfolio weights, compared
-  against the VaR/CVaR baseline to show the gap between "normal times"
-  statistical models and genuine crisis outcomes.
+- **Stress testing**: historical scenario replay of the 2008 GFC (Lehman
+  collapse, Sep-Nov 2008) and the COVID-19 crash (Feb-Mar 2020) against
+  current portfolio weights, compared against the VaR/CVaR baseline to show
+  the gap between "normal times" statistical models and genuine crisis
+  outcomes.
 
 ## Known limitations
 
@@ -119,12 +133,13 @@ market-risk-dashboard/
 ├── sql/schema.sql                    Star schema DDL
 ├── notebooks/                        Exploration + prototyping + final writeup
 ├── src/
-│   ├── config.py                     Supabase connection config
+│   ├── config.py                     Database (Neon) connection config
 │   ├── universe.py                   Tickers, sectors, portfolio metadata
 │   ├── risk_config.py                Rolling windows, confidence levels, scenarios
-│   ├── data_pipeline/                yfinance → Supabase ETL
+│   ├── data_pipeline/                yfinance → Postgres ETL
 │   └── risk_engine/                  VaR/CVaR, backtesting, stress testing
 ├── dashboard/app.py                  Streamlit app
+├── .github/workflows/                Daily pipeline + keep-awake (optional)
 └── tests/                            Unit tests for risk_engine
 ```
 

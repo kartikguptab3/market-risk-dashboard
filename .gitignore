@@ -20,6 +20,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# Local interview-prep notes (kept off the public repo)
+docs/
+
 # IDE
 .vscode/
 .idea/

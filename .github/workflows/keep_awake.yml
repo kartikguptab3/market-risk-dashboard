@@ -1,0 +1,63 @@
+name: Keep Streamlit App Awake
+
+# Streamlit Community Cloud puts apps to sleep after ~12h without visitors.
+# This opens the app in a headless browser every 6 hours (counts as a visit)
+# and clicks "Yes, get this app back up!" if it has already gone to sleep.
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"   # every 6 hours (UTC)
+  workflow_dispatch:          # manual "Run workflow" button for testing
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Playwright + Chromium
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Visit the app (and wake it if asleep)
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          cat > wake.py <<'PY'
+          import os, re, sys
+          from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+
+          url = os.environ.get("APP_URL", "").strip()
+          if not url:
+              sys.exit("APP_URL repository variable is not set (Settings -> Secrets and variables -> Actions -> Variables).")
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page()
+              page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+              page.wait_for_timeout(10_000)  # let the sleep screen or the app render
+
+              wake = page.get_by_role("button", name=re.compile(r"get this app back up", re.I))
+              if wake.count() > 0:
+                  print("App was asleep -- clicking the wake-up button.")
+                  wake.first.click()
+                  try:
+                      wake.first.wait_for(state="detached", timeout=180_000)
+                      print("Wake-up started; app is booting.")
+                  except PWTimeout:
+                      print("Clicked, but the sleep screen is still showing after 3 min -- check the app.")
+              else:
+                  print("App is awake -- this visit counts as traffic.")
+              page.wait_for_timeout(20_000)  # stay on the page so the visit registers
+              browser.close()
+          PY
+          python wake.py
+
+# Setup: Repo Settings -> Secrets and variables -> Actions -> Variables tab ->
+# New repository variable: APP_URL = https://<your-app>.streamlit.app/
