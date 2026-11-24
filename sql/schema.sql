@@ -72,7 +72,7 @@ create table if not exists fact_returns (
 create table if not exists fact_risk_metrics (
     date_id         date references dim_date(date_id),
     portfolio_id    int references dim_portfolio(portfolio_id),
-    method          text not null,      -- 'parametric', 'historical', 'monte_carlo'
+    method          text not null,      -- 'parametric', 'parametric_ewma', 'historical', 'monte_carlo'
     confidence      numeric(4,3) not null,  -- 0.95 or 0.99
     var_pct         numeric(10,6) not null, -- VaR as a fraction of portfolio value (e.g. 0.021 = 2.1%)
     var_value       numeric(14,2),          -- VaR in currency terms, given an assumed portfolio value

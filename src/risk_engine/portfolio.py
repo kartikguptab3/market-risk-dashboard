@@ -67,6 +67,59 @@ def covariance_matrix(returns_df: pd.DataFrame, annualize: bool = False) -> pd.D
     return cov
 
 
+def ewma_weights(n: int, lam: float = 0.94) -> np.ndarray:
+    """
+    Normalized EWMA observation weights for n observations, oldest first.
+    w_i ∝ λ^(n-1-i): the most recent day gets (1-λ), the day before λ(1-λ), ...
+    Normalized to sum to 1 so a finite window isn't biased low.
+    """
+    if not 0 < lam < 1:
+        raise ValueError("lam (decay factor) must be strictly between 0 and 1")
+    w = (1 - lam) * lam ** np.arange(n - 1, -1, -1)
+    return w / w.sum()
+
+
+def ewma_covariance_matrix(returns_df: pd.DataFrame, lam: float = 0.94) -> pd.DataFrame:
+    """
+    RiskMetrics (J.P. Morgan, 1996) EWMA covariance matrix -- the one-day-ahead
+    forecast made with all rows of returns_df (the last row = most recent day).
+
+        Σ = Σ_i w_i · r_i r_iᵀ,   w_i ∝ λ^(n-1-i)
+
+    Equivalent to the recursion Σ_t = λ·Σ_{t-1} + (1-λ)·r_{t-1} r_{t-1}ᵀ.
+    Zero-mean assumption (RiskMetrics convention -- the daily mean is noise
+    next to daily vol). λ = 0.94 is the RiskMetrics daily standard
+    (effective memory ≈ 1/(1-λ) ≈ 17 days, vs. 250 equally-weighted days).
+
+    Daily, not annualized -- same units as covariance_matrix(annualize=False).
+    """
+    w = ewma_weights(len(returns_df), lam)
+    r = returns_df.values
+    cov = (r * w[:, None]).T @ r
+    return pd.DataFrame(cov, index=returns_df.columns, columns=returns_df.columns)
+
+
+def ewma_volatility(returns: pd.Series, lam: float = 0.94) -> pd.Series:
+    """
+    Time series of EWMA daily volatility for a single return series
+    (e.g. portfolio_returns()), via the recursion
+        σ²_t = λ·σ²_{t-1} + (1-λ)·r²_{t-1}
+
+    Value at date t is the forecast for day t, using returns up to t-1
+    (no look-ahead). Seeded with the first return squared; the seed's
+    influence decays as λ^t, so discard the first ~50 days as burn-in.
+    Daily vol -- multiply by sqrt(TRADING_DAYS_PER_YEAR) to annualize.
+    """
+    if not 0 < lam < 1:
+        raise ValueError("lam (decay factor) must be strictly between 0 and 1")
+    r2 = returns.values ** 2
+    var = np.empty_like(r2, dtype=float)
+    var[0] = r2[0]
+    for t in range(1, len(r2)):
+        var[t] = lam * var[t - 1] + (1 - lam) * r2[t - 1]
+    return pd.Series(np.sqrt(var), index=returns.index, name="ewma_vol")
+
+
 def portfolio_volatility(weights: pd.Series, cov_matrix: pd.DataFrame, annualize: bool = False) -> float:
     """
     Portfolio standard deviation: sqrt(w' Σ w).

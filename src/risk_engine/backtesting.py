@@ -16,6 +16,8 @@ _METHOD_FUNCS = {
     "historical": historical_var_cvar,
     "parametric": parametric_var_cvar,
     "monte_carlo": monte_carlo_var_cvar,  # re-simulates fresh paths for every day of the backtest
+    # EWMA-weighted covariance inside the same Delta-Normal formula
+    "parametric_ewma": lambda df, w, c, lam=0.94: parametric_var_cvar(df, w, c, volatility_model="ewma", ewma_lambda=lam),
 }
 
 
@@ -25,11 +27,14 @@ def rolling_backtest(
     method: str = "historical",
     confidence: float = 0.95,
     window: int = 250,
+    ewma_lambda: float = 0.94,
 ) -> pd.DataFrame:
     if method not in _METHOD_FUNCS:
         raise ValueError(f"Unknown method '{method}'. Choose from {list(_METHOD_FUNCS)}.")
 
     var_func = _METHOD_FUNCS[method]
+    if method == "parametric_ewma":
+        var_func = lambda df, w, c: _METHOD_FUNCS["parametric_ewma"](df, w, c, ewma_lambda)
     port_returns = portfolio_returns(returns_df, weights)
 
     records = []

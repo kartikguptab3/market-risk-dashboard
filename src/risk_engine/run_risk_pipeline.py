@@ -1,6 +1,7 @@
 """
 Risk pipeline orchestrator: pulls fact_returns from Postgres (Neon), computes
-VaR/CVaR (parametric, historical and Monte Carlo, both confidence levels), runs the
+VaR/CVaR (parametric, parametric EWMA, historical and Monte Carlo, both
+confidence levels), runs the
 backtest, runs stress tests, and writes everything back to the database.
 
 This is the ONLY module allowed to import from both data_pipeline/ and
@@ -9,8 +10,8 @@ database-specific code.
 
 Scope note: the hypothetical sector-shock scenarios are out of scope for this
 pipeline (see stress_testing.py) -- only the historical scenarios in
-HISTORICAL_SCENARIOS run here. All three VaR methods (historical,
-parametric, Monte Carlo) run in both the current snapshot and the stored
+HISTORICAL_SCENARIOS run here. All four VaR methods (historical,
+parametric, parametric EWMA, Monte Carlo) run in both the current snapshot and the stored
 95% backtest.
 
 Run standalone (after fetch_data.py has populated prices/returns):
@@ -26,13 +27,13 @@ from sqlalchemy import text
 
 from universe import PORTFOLIO_NAME
 from risk_config import (ROLLING_WINDOW_DAYS, CONFIDENCE_LEVELS, ASSUMED_PORTFOLIO_VALUE,
-                         HISTORICAL_SCENARIOS, MONTE_CARLO_SIMULATIONS)
+                         HISTORICAL_SCENARIOS, MONTE_CARLO_SIMULATIONS, EWMA_LAMBDA)
 from data_pipeline.db import get_engine, upsert_dataframe, read_table
 from risk_engine.var_cvar import compute_all_methods
 from risk_engine.backtesting import rolling_backtest, kupiec_pof_test
 from risk_engine.stress_testing import historical_scenario_pnl
 
-BACKTEST_METHODS = ["historical", "parametric", "monte_carlo"]
+BACKTEST_METHODS = ["historical", "parametric", "parametric_ewma", "monte_carlo"]
 
 
 def load_returns_matrix(engine):
@@ -73,7 +74,8 @@ def compute_current_var_cvar(engine, returns_df: pd.DataFrame, weights: pd.Serie
     as_of_date = window_df.index.max().date()
 
     results = pd.concat(
-        [compute_all_methods(window_df, weights, confidence=c, n_simulations=MONTE_CARLO_SIMULATIONS)
+        [compute_all_methods(window_df, weights, confidence=c, n_simulations=MONTE_CARLO_SIMULATIONS,
+                             ewma_lambda=EWMA_LAMBDA)
          for c in CONFIDENCE_LEVELS],
         ignore_index=True,
     )
@@ -93,7 +95,8 @@ def run_backtest_and_store(engine, returns_df: pd.DataFrame, weights: pd.Series,
     confidence = CONFIDENCE_LEVELS[0]  # 95%
 
     for method in BACKTEST_METHODS:
-        backtest_df = rolling_backtest(returns_df, weights, method=method, confidence=confidence, window=ROLLING_WINDOW_DAYS)
+        backtest_df = rolling_backtest(returns_df, weights, method=method, confidence=confidence,
+                                       window=ROLLING_WINDOW_DAYS, ewma_lambda=EWMA_LAMBDA)
         if backtest_df.empty:
             print(f"Not enough history for a {ROLLING_WINDOW_DAYS}-day backtest window yet -- skipping.")
             return

@@ -107,3 +107,63 @@ def test_student_t_has_fatter_tail_than_normal(synthetic_returns):
     _, cvar_t = monte_carlo_var_cvar(returns_df, weights, 0.99, n_simulations=100_000,
                                      distribution="student_t", t_df=4)
     assert cvar_t > cvar_normal
+
+
+# ---------------------------------------------------------------------------
+# EWMA volatility
+# ---------------------------------------------------------------------------
+from risk_engine.portfolio import ewma_weights, ewma_covariance_matrix, ewma_volatility
+
+
+def test_ewma_weights_sum_to_one_and_favor_recent():
+    w = ewma_weights(250, lam=0.94)
+    assert np.isclose(w.sum(), 1.0)
+    assert np.all(np.diff(w) > 0)  # oldest first, so weights increase
+
+
+def test_ewma_covariance_matches_recursion():
+    """Matrix form must equal the textbook recursion Σ_t = λΣ_{t-1} + (1-λ) r rᵀ."""
+    rng = np.random.default_rng(0)
+    returns_df = pd.DataFrame(rng.normal(0, 0.01, size=(300, 3)), columns=["A", "B", "C"])
+    lam = 0.94
+    cov = np.zeros((3, 3))
+    for r in returns_df.values:
+        cov = lam * cov + (1 - lam) * np.outer(r, r)
+    cov /= 1 - lam ** len(returns_df)  # same normalization as ewma_weights
+    assert np.allclose(ewma_covariance_matrix(returns_df, lam).values, cov)
+
+
+def test_ewma_volatility_series_matches_covariance_diagonal():
+    """Last forecast of the series (+1 step) equals sqrt of the matrix diagonal, burn-in aside."""
+    rng = np.random.default_rng(1)
+    s = pd.Series(rng.normal(0, 0.01, size=1000))
+    vol = ewma_volatility(s, lam=0.94)
+    # next-day forecast from the recursion vs matrix form on the full series
+    next_var = 0.94 * vol.iloc[-1] ** 2 + 0.06 * s.iloc[-1] ** 2
+    matrix_var = ewma_covariance_matrix(s.to_frame("A"), 0.94).iloc[0, 0]
+    assert np.isclose(np.sqrt(next_var), np.sqrt(matrix_var), rtol=1e-6)
+
+
+def test_ewma_var_reacts_to_recent_vol_spike():
+    """Calm 230 days then a 20-day high-vol burst: EWMA VaR must jump far more than equal-weighted."""
+    rng = np.random.default_rng(3)
+    calm = rng.normal(0, 0.005, size=230)
+    stressed = rng.normal(0, 0.03, size=20)
+    returns_df = pd.DataFrame({"A": np.concatenate([calm, stressed])})
+    weights = pd.Series([1.0], index=["A"])
+    var_sample, _ = parametric_var_cvar(returns_df, weights, 0.99)
+    var_ewma, _ = parametric_var_cvar(returns_df, weights, 0.99, volatility_model="ewma")
+    assert var_ewma > 1.5 * var_sample
+
+
+def test_parametric_ewma_obeys_var_cvar_ordering(synthetic_returns):
+    returns_df, weights = synthetic_returns
+    v95, c95 = parametric_var_cvar(returns_df, weights, 0.95, volatility_model="ewma")
+    v99, c99 = parametric_var_cvar(returns_df, weights, 0.99, volatility_model="ewma")
+    assert v99 >= v95 and c95 >= v95 and c99 >= v99
+
+
+def test_parametric_rejects_unknown_volatility_model(synthetic_returns):
+    returns_df, weights = synthetic_returns
+    with pytest.raises(ValueError):
+        parametric_var_cvar(returns_df, weights, volatility_model="garch")

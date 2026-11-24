@@ -18,10 +18,11 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
-from risk_engine.portfolio import align_weights, portfolio_returns, covariance_matrix
+from risk_engine.portfolio import align_weights, portfolio_returns, covariance_matrix, ewma_covariance_matrix
 
 
-def parametric_var_cvar(returns_df: pd.DataFrame, weights: pd.Series, confidence: float = 0.95):
+def parametric_var_cvar(returns_df: pd.DataFrame, weights: pd.Series, confidence: float = 0.95,
+                        volatility_model: str = "sample", ewma_lambda: float = 0.94):
     """
     Variance-covariance (Delta-Normal) method. Assumes portfolio returns are
     normally distributed.
@@ -32,12 +33,26 @@ def parametric_var_cvar(returns_df: pd.DataFrame, weights: pd.Series, confidence
     stress testing / risk decomposition later, where the full covariance
     structure (not just the aggregate series) is needed.
 
+    volatility_model:
+      "sample" -- equally weighted covariance over the whole window, sample mean.
+      "ewma"   -- RiskMetrics EWMA covariance (decay `ewma_lambda`), zero mean.
+                  Recent days dominate, so VaR reacts quickly to volatility
+                  clustering instead of lagging by months.
+
     Returns (var, cvar), both as positive numbers.
     """
-    aligned_weights = align_weights(weights, returns_df)
-    cov = covariance_matrix(returns_df)
+    if volatility_model not in ("sample", "ewma"):
+        raise ValueError("volatility_model must be 'sample' or 'ewma'")
 
-    mu = (returns_df.mean() * aligned_weights).sum()
+    aligned_weights = align_weights(weights, returns_df)
+
+    if volatility_model == "ewma":
+        cov = ewma_covariance_matrix(returns_df, lam=ewma_lambda)
+        mu = 0.0  # RiskMetrics convention
+    else:
+        cov = covariance_matrix(returns_df)
+        mu = (returns_df.mean() * aligned_weights).sum()
+
     sigma = np.sqrt(aligned_weights.values @ cov.values @ aligned_weights.values)
 
     z = norm.ppf(1 - confidence)
@@ -130,11 +145,11 @@ def monte_carlo_var_cvar(
 
 
 def compute_all_methods(returns_df: pd.DataFrame, weights: pd.Series, confidence: float = 0.95,
-                         n_simulations: int = 10_000) -> pd.DataFrame:
+                         n_simulations: int = 10_000, ewma_lambda: float = 0.94) -> pd.DataFrame:
     """
-    Calls the historical, parametric and Monte Carlo methods and returns a
-    tidy DataFrame with columns [method, confidence, var_pct, cvar_pct] --
-    one row per method.
+    Calls the historical, parametric (sample and EWMA) and Monte Carlo methods
+    and returns a tidy DataFrame with columns [method, confidence, var_pct,
+    cvar_pct] -- one row per method.
     """
     results = []
 
@@ -143,6 +158,10 @@ def compute_all_methods(returns_df: pd.DataFrame, weights: pd.Series, confidence
 
     var_p, cvar_p = parametric_var_cvar(returns_df, weights, confidence)
     results.append({"method": "parametric", "confidence": confidence, "var_pct": var_p, "cvar_pct": cvar_p})
+
+    var_e, cvar_e = parametric_var_cvar(returns_df, weights, confidence,
+                                        volatility_model="ewma", ewma_lambda=ewma_lambda)
+    results.append({"method": "parametric_ewma", "confidence": confidence, "var_pct": var_e, "cvar_pct": cvar_e})
 
     var_mc, cvar_mc = monte_carlo_var_cvar(returns_df, weights, confidence, n_simulations=n_simulations)
     results.append({"method": "monte_carlo", "confidence": confidence, "var_pct": var_mc, "cvar_pct": cvar_mc})

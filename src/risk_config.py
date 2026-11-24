@@ -9,6 +9,7 @@ DATA_START_DATE = "2005-01-01"
 ROLLING_WINDOW_DAYS = 250          # ~1 trading year, standard for VaR estimation
 CONFIDENCE_LEVELS = [0.95, 0.99]
 MONTE_CARLO_SIMULATIONS = 10_000
+EWMA_LAMBDA = 0.94                 # RiskMetrics daily decay factor (effective memory ~17 days)
 ASSUMED_PORTFOLIO_VALUE = 10_000_000  # $10M notional, purely for currency-denominated VaR display
 
 # 2022 rate-hike selloff cut for scope; add more (name -> (start, end)) and the pipeline picks them up.

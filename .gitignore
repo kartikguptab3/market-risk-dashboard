@@ -13,6 +13,9 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
+# Test cache
+.pytest_cache/
+
 # Streamlit
 .streamlit/secrets.toml
 
