@@ -1,11 +1,9 @@
-name: Daily Market Risk Pipeline
+name: Market Risk Pipeline (manual)
 
+# Daily schedule switched off to stay within Neon's free-tier storage.
+# Run on demand from the Actions tab ("Run workflow").
 on:
-  schedule:
-    # Runs at 22:30 UTC on weekdays — after US markets close (4pm ET / ~21:00 UTC,
-    # with a buffer for yfinance data to settle)
-    - cron: "30 22 * * 1-5"
-  workflow_dispatch:  # allows manual trigger from the GitHub Actions tab, useful while testing
+  workflow_dispatch:
 
 jobs:
   run-pipeline:
