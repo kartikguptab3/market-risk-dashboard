@@ -92,8 +92,10 @@ pytest tests/
 ### 8. GitHub Actions (optional)
 Two workflows in `.github/workflows/`, both with a manual **Run workflow**
 button in the **Actions** tab:
-- `daily_pipeline.yml`: runs step 4's two commands on weekdays after US
-  market close. Needs a repository secret `DATABASE_URL`.
+- `daily_pipeline.yml`: runs step 4's two commands on demand. The daily
+  weekday schedule is switched off to stay within Neon's free-tier storage
+  (each run re-upserts the full price history). Needs a repository secret
+  `DATABASE_URL`.
 - `keep_awake.yml`: opens the hosted dashboard every 6 hours (and clicks
   the wake-up button if it has gone to sleep). Needs a repository variable
   `APP_URL` set to the app's link.
@@ -174,7 +176,7 @@ market-risk-dashboard/
 │   └── risk_engine/                  VaR/CVaR (incl. EWMA), backtesting, stress testing
 ├── dashboard/app.py                  Streamlit app
 ├── .streamlit/config.toml            Dashboard theme (light)
-├── .github/workflows/                Daily pipeline + keep-awake (optional)
+├── .github/workflows/                On-demand pipeline + keep-awake (optional)
 └── tests/                            Unit tests for risk_engine
 ```
 
